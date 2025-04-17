@@ -5,22 +5,6 @@
 // LIS2MDL I2C varsayılan slave addresi 
 #define LIS2MDL_ADDRESS 0x1E
 
-// Hard-Iron Offset Kaydedicileri
-#define OFFSET_X_REG_L 0x45
-#define OFFSET_X_REG_H 0x46
-#define OFFSET_Y_REG_L 0x47
-#define OFFSET_Y_REG_H 0x48
-#define OFFSET_Z_REG_L 0x49
-#define OFFSET_Z_REG_H 0x4A
-
-// Konfigürasyon Kaydedicileri
-#define CFG_REG_A 0x60
-#define CFG_REG_B 0x61
-#define CFG_REG_C 0x62
-
-// Durum Kaydedicisi
-#define STATUS_REG 0x67
-
 // Çıkış Kaydedicileri
 #define OUTX_L_REG 0x68
 #define OUTX_H_REG 0x69
@@ -29,9 +13,19 @@
 #define OUTZ_L_REG 0x6C
 #define OUTZ_H_REG 0x6D
 
-// Sensör İç Sıcaklık Kaydedicileri
-#define TEMP_OUT_L_REG 0x6E
-#define  TEMP_OUT_H_REG 0x6F
+// Konfigürasyon Kaydedicileri
+#define CFG_REG_A 0x60
+#define CFG_REG_C 0x62
+
+// Sensör Değişkenleri
+int16_t rawX, rawY, rawZ;
+float Xm, Ym, Zm;
+
+// Kalibrasyon değişkenleri
+float magXmin, magXmax, magYmin, magYmax, magZmin, magZmax;
+float magXoffset, magYoffset, magZoffset;
+float magXscale, magYscale, magZscale;
+bool kalibrasyon_yapildi = false;
 
 // Bluetooth Tanımlamaları
 SoftwareSerial BTSerial(2, 3); // RX, TX
@@ -50,11 +44,6 @@ const int lBack2 = 10;
 const int lenablePin1 = 13;
 const int lenablePin2 = 15;
 
-// Pusula Değişkenleri
-int16_t rawX, rawY, rawZ;
-float Xm, Ym, Zm;
-float rota, sapma = 0.115, rotaAcisi, rotaFiltrele;
-
 // Joystick Değişkenleri
 double leftJoystickX = 0.0;
 double leftJoystickY = 0.0;
@@ -68,7 +57,7 @@ void setup() {
   // Seri iletişim başlatma
   Serial.begin(9600);
   BTSerial.begin(9600);
-  Serial.println("Sistem baslatiliyor...");
+  //Serial.println("Sistem baslatiliyor...");
 
   // Motor pinleri ayarla
   pinMode(rFront1, OUTPUT);
@@ -89,7 +78,7 @@ void setup() {
   lis2mdlBaslat();
   
   dur();
-  Serial.println("Sistem hazir!");
+  //Serial.println("Sistem hazir!");
 }
 
 void loop() {
@@ -157,48 +146,37 @@ void bluetoothKontrol() {
 
 // Pusula Okuma Fonksiyonu
 void pusulaOku() {
-    //verilerHazirMi();
-  
+// Ham verileri oku
   rawX = ikiByteOku(OUTX_L_REG);
-  // Datasheet Hassasiyeti: 1.5 mG/digit
-  Xm = rawX * 0.00015;  // Gauss unit
-
   rawY = ikiByteOku(OUTY_L_REG);
-  Ym = rawY * 0.00015; 
-
   rawZ = ikiByteOku(OUTZ_L_REG);
+  
+  // Gauss birimine çevir
+  Xm = rawX * 0.00015;
+  Ym = rawY * 0.00015;
   Zm = rawZ * 0.00015;
 
-  // Konuma göre rotayı düzeltmek lazım
-  // Lokasyona göre sapmayı burdan bul. https://www.ngdc.noaa.gov/geomag-web/ 
-  // Bende 6.6 derece. Yani 0.115 rad
-  rota = atan2(Ym, Xm);
-  sapma = 0.115;
-  rota += sapma;
-
-  // Negatid olduğunda düzeltme
-  if(rota <= 0) rota += 2*PI;
-
-  // Sapma eklediğimizden dolayı düzeltme
-  if(rota >= 2*PI) rota -= 2*PI;
+  if (kalibrasyon_yapildi) {
+    // Kalibre edilmiş değerleri hesapla
+    Xm = (Xm - magXoffset) * magXscale;
+    Ym = (Ym - magYoffset) * magYscale;
+    Zm = (Zm - magZoffset) * magZscale;
+  }
   
-  rotaAcisi = rota * 180/PI;  //radyandan dereceye[0-360]
-
-  // Çıkış açısını düzeltme / Low Pass filtresi
-  // Ani dalgalanmaları yumşatır
-  //rotaFiltrele = rotaFiltrele * 0.85 + rotaAcisi * 0.15;
-  rotaFiltrele = rotaFiltrele * 0.90 + rotaAcisi * 0.10; // Daha az filtreleme
-
-
-  //icSicaklik = ikiByteOku(TEMP_OUT_L_REG);
+  // Değerleri yazdır
+  Serial.print("X: "); Serial.print(Xm);
+  Serial.print(" Y: "); Serial.print(Ym);
+  Serial.print(" Z: "); Serial.println(Zm);
   
-  //Serial.print("Xm: "); Serial.print(Xm);
-  //Serial.print(" Ym: "); Serial.println(Ym);
-  //Serial.print(" Zm: "); Serial.println(Zm);
-
-  yonYaz(rotaAcisi, 5.0);
-  //rawXyzYazdir();
-  delay(100);
+  // Pusula açısını hesapla ve yazdır (yatay düzlemde)
+  float heading = atan2(Ym, Xm) * 180.0 / PI;
+  if (heading < 0) heading += 360.0;
+  
+  // Açıyı saat yönünde artacak şekilde düzelt
+  heading = 360.0 - heading;
+  
+  Serial.print("Açı: "); Serial.print(heading);
+  Serial.print("° Yön: "); Serial.println(yonBul(heading));
 }
 
 // Hareket Kontrol Fonksiyonu
@@ -226,13 +204,19 @@ void hareketKontrol() {
 /**************************************
  * PUSULA FONKSİYONLARI
  **************************************/
-int lis2mdlBaslat(){
+void lis2mdlBaslat(){
   Wire.beginTransmission(LIS2MDL_ADDRESS);
   Wire.write(CFG_REG_A);
   Wire.write(0x80); // 10 Hz mod
   Wire.write(CFG_REG_C);
   Wire.write(0x01); // Mag'yi etkinleştir
-  return Wire.endTransmission();
+  Wire.endTransmission();
+  
+  Serial.println("Kalibrasyon başlıyor...");
+  Serial.println("Sensörü yavaşça tüm yönlerde döndürün (30 saniye)");
+  kalibreEt();
+  Serial.println("Kalibrasyon tamamlandı!");
+  delay(1000);
 }
 
 int16_t ikiByteOku(uint8_t lowAddress){
@@ -254,23 +238,76 @@ int16_t ikiByteOku(uint8_t lowAddress){
   return result;
 }
 
+void kalibreEt() {
+  magXmin = magYmin = magZmin = 99999;
+  magXmax = magYmax = magZmax = -99999;
+  
+  uint32_t baslangic = millis();
+  
+  // 30 saniye boyunca veri topla
+  while (millis() - baslangic < 30000) {
+    rawX = ikiByteOku(OUTX_L_REG);
+    rawY = ikiByteOku(OUTY_L_REG);
+    rawZ = ikiByteOku(OUTZ_L_REG);
+    
+    float X = rawX * 0.00015;
+    float Y = rawY * 0.00015;
+    float Z = rawZ * 0.00015;
+    
+    // Min/max değerleri güncelle
+    if (X < magXmin) magXmin = X;
+    if (X > magXmax) magXmax = X;
+    if (Y < magYmin) magYmin = Y;
+    if (Y > magYmax) magYmax = Y;
+    if (Z < magZmin) magZmin = Z;
+    if (Z > magZmax) magZmax = Z;
+    
+    delay(100);
+  }
+  
+  // Offset ve scale değerlerini hesapla
+  magXoffset = (magXmax + magXmin) / 2;
+  magYoffset = (magYmax + magYmin) / 2;
+  magZoffset = (magZmax + magZmin) / 2;
+  
+  magXscale = 1.0;
+  magYscale = 1.0;
+  magZscale = 1.0;
+  
+  float avg_delta_x = (magXmax - magXmin) / 2;
+  float avg_delta_y = (magYmax - magYmin) / 2;
+  float avg_delta_z = (magZmax - magZmin) / 2;
+  
+  float avg_delta = (avg_delta_x + avg_delta_y + avg_delta_z) / 3;
+  
+  magXscale = avg_delta / avg_delta_x;
+  magYscale = avg_delta / avg_delta_y;
+  magZscale = avg_delta / avg_delta_z;
+  
+  kalibrasyon_yapildi = true;
+  
+  // Kalibrasyon sonuçlarını yazdır
+  /*
+  Serial.println("Kalibrasyon değerleri:");
+  Serial.print("X Offset: "); Serial.print(magXoffset);
+  Serial.print(" Scale: "); Serial.println(magXscale);
+  Serial.print("Y Offset: "); Serial.print(magYoffset);
+  Serial.print(" Scale: "); Serial.println(magYscale);
+  Serial.print("Z Offset: "); Serial.print(magZoffset);
+  Serial.print(" Scale: "); Serial.println(magZscale);
+  */
+}
 
-void yonYaz(float pusulaAci, float pay){
-  Serial.println();
-  Serial.print("Derece: "); Serial.print(pusulaAci);
-  Serial.println();
-  if(pusulaAci > 360 - pay || pusulaAci < pay){
-    Serial.println("Kuzeye Gidiliyor.");
-  }
-  else if(pusulaAci > 90 - pay && pusulaAci < 90 + pay){
-    Serial.println("Batiya Gidiliyor.");
-  }
-  else if(pusulaAci > 180 - pay && pusulaAci < 180 + pay){
-    Serial.println("Guneye Gidiliyor.");
-  }
-  else if(pusulaAci > 270 - pay && pusulaAci < 270 + pay){
-    Serial.println("Doguya Gidiliyor.");
-  }
+// Yön bilgisini döndüren fonksiyon
+String yonBul(float heading) {
+  if (heading >= 337.5 || heading < 22.5) return "Kuzey";
+  else if (heading >= 22.5 && heading < 67.5) return "Kuzeydoğu";
+  else if (heading >= 67.5 && heading < 112.5) return "Doğu";
+  else if (heading >= 112.5 && heading < 157.5) return "Güneydoğu";
+  else if (heading >= 157.5 && heading < 202.5) return "Güney";
+  else if (heading >= 202.5 && heading < 247.5) return "Güneybatı";
+  else if (heading >= 247.5 && heading < 292.5) return "Batı";
+  else return "Kuzeybatı";
 }
 
 void rawXyzYazdir(){
