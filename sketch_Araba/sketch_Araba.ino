@@ -50,8 +50,17 @@ double leftJoystickY = 0.0;
 double rightJoystickX = 0.0;
 double rightJoystickY = 0.0;
 
+//Pusula Değişkenleri
+float heading;
+
+//Otonom Sürüş Değişkenleri
+bool dogruYoneDondu = false;
+
 String line = "";
 unsigned long lastTime;
+
+unsigned long delayStart;
+bool delayRunning = false;
 
 void setup() {
   // Seri iletişim başlatma
@@ -78,6 +87,7 @@ void setup() {
   lis2mdlBaslat();
   
   dur();
+  delayStart = millis();
   //Serial.println("Sistem hazir!");
 }
 
@@ -105,18 +115,18 @@ void bluetoothKontrol() {
                  varValue = line.substring(line.indexOf('=') + 1, line.length());
 
           // Switch durumlarını kontrol et
-          /*if (varName == "switch1") {
-            if(varValue == "true") belirliYoneGit(0);    // Kuzey (0°)
+          if (varName == "switch1") {
+            if(varValue == "true") belirliYoneGit(0,3);    // Kuzey (0°)
           }
           else if (varName == "switch2") {
-            if(varValue == "true") belirliYoneGit(90);   // Doğu (90°)
+            if(varValue == "true") belirliYoneGit(1,3);   // Batı (90°)
           }
           else if (varName == "switch3") {
-            if(varValue == "true") belirliYoneGit(180);  // Güney (180°)
+            if(varValue == "true") belirliYoneGit(2,3);  // Güney (180°)
           }
           else if (varName == "switch4") {
-            if(varValue == "true") belirliYoneGit(270);  // Batı (270°)
-          }*/
+            if(varValue == "true") belirliYoneGit(3,3);  // Doğu (270°)
+          }
 
           // Joystick verilerini de işlemeye devam et
           if (varName == "leftJoystickX")
@@ -145,7 +155,7 @@ void bluetoothKontrol() {
 }
 
 // Pusula Okuma Fonksiyonu
-void pusulaOku() {
+float pusulaOku() {
 // Ham verileri oku
   rawX = ikiByteOku(OUTX_L_REG);
   rawY = ikiByteOku(OUTY_L_REG);
@@ -169,14 +179,15 @@ void pusulaOku() {
   Serial.print(" Z: "); Serial.println(Zm);
   
   // Pusula açısını hesapla ve yazdır (yatay düzlemde)
-  float heading = atan2(Ym, Xm) * 180.0 / PI;
+  heading = atan2(Ym, Xm) * 180.0 / PI;
   if (heading < 0) heading += 360.0;
   
   // Açıyı saat yönünde artacak şekilde düzelt
-  heading = 360.0 - heading;
+  //heading = 360.0 - heading;
   
   Serial.print("Açı: "); Serial.print(heading);
   Serial.print("° Yön: "); Serial.println(yonBul(heading));
+  return heading;
 }
 
 // Hareket Kontrol Fonksiyonu
@@ -192,8 +203,8 @@ void hareketKontrol() {
   
   // Sağ-Sol kontrolü (sadece rightJoystickX)
   if (abs(rightJoystickX) > deadzone) {
-    if (rightJoystickX > 0) sagaDon();
-    else solaDon();
+    if (rightJoystickX > 0) sagaDon(255);
+    else solaDon(255);
     return;
   }
   
@@ -301,13 +312,13 @@ void kalibreEt() {
 // Yön bilgisini döndüren fonksiyon
 String yonBul(float heading) {
   if (heading >= 337.5 || heading < 22.5) return "Kuzey";
-  else if (heading >= 22.5 && heading < 67.5) return "Kuzeydoğu";
-  else if (heading >= 67.5 && heading < 112.5) return "Doğu";
-  else if (heading >= 112.5 && heading < 157.5) return "Güneydoğu";
+  else if (heading >= 22.5 && heading < 67.5) return "Kuzeybatı";
+  else if (heading >= 67.5 && heading < 112.5) return "Batı";
+  else if (heading >= 112.5 && heading < 157.5) return "Güneybatı";
   else if (heading >= 157.5 && heading < 202.5) return "Güney";
-  else if (heading >= 202.5 && heading < 247.5) return "Güneybatı";
-  else if (heading >= 247.5 && heading < 292.5) return "Batı";
-  else return "Kuzeybatı";
+  else if (heading >= 202.5 && heading < 247.5) return "Güneydoğu";
+  else if (heading >= 247.5 && heading < 292.5) return "Doğu";
+  else return "Kuzeydoğu";
 }
 
 void rawXyzYazdir(){
@@ -318,12 +329,61 @@ void rawXyzYazdir(){
 }
 
 /**************************************
+ * OTONOM FONKSİYONLARI
+ **************************************/
+
+void belirliYoneGit(int yonNum, int sure){
+  
+  unsigned long timeout = millis();
+  dogruYoneDondu = false;
+
+  float hedefAci;
+
+  if (yonNum == 0) hedefAci = 0;        // Kuzey
+  else if (yonNum == 1) hedefAci = 90;  // Batı
+  else if (yonNum == 2) hedefAci = 180; // Güney
+  else if (yonNum == 3) hedefAci = 270; // Doğu
+  else return;
+
+  while (!dogruYoneDondu && millis() - timeout < 10000) {
+    float mevcutHeading = pusulaOku();
+    float fark = hedefAci - mevcutHeading;
+    
+    // 180 dereceyi geçerse farkı düzelt
+    if (fark > 180) fark -= 360;
+    if (fark < -180) fark += 360;
+
+    Serial.print("Heading: "); Serial.print(mevcutHeading);
+    Serial.print(" | Fark: "); Serial.println(fark);
+
+    if (abs(fark) < 10) {  // Yön farkı 5 derece oluncaya kadar dönme işlemi
+      dur();
+      dogruYoneDondu = true;
+    } else {
+      if (fark > 0)
+        solaDon(180);  // Sol dönüş
+      else
+        sagaDon(180);  // Sağ dönüş
+    }
+
+    delay(20); // Pusula okumaları arası delay
+  }
+  
+  // Hedefe ulaşınca ileri git
+  Serial.println("Otonom ileri başlıyor");
+  delayStart = millis();
+  while (millis() - delayStart < sure * 1000) {
+    ileri();
+    delay(50);
+  }
+  Serial.println("Otonom ileri bitti");
+
+  dur();
+}
+
+/**************************************
  * MOTOR FONKSİYONLARI
  **************************************/
-/*
-void belirliYoneGit(float derece){
-  //Verilen dereceye göre Doğuya batı kuzey güney e dön ve ilerle
-}*/
 
 void ileri() {
   // Motor hızlarını ayarla
@@ -349,10 +409,10 @@ void geri() {
   digitalWrite(lBack1, LOW); digitalWrite(lBack2, HIGH);
 }
 
-void sagaDon() {
+void sagaDon(int hiz) {
   // Motor hızlarını ayarla
-  analogWrite(renablePin1, 255); analogWrite(renablePin2, 255);
-  analogWrite(lenablePin1, 255); analogWrite(lenablePin2, 255);
+  analogWrite(renablePin1, hiz); analogWrite(renablePin2, hiz);
+  analogWrite(lenablePin1, hiz); analogWrite(lenablePin2, hiz);
 
   // Sağ taraf motorlar TAM GERİ (fren etkisi)
   digitalWrite(rFront1, LOW); digitalWrite(rFront2, HIGH);
@@ -363,10 +423,10 @@ void sagaDon() {
   digitalWrite(lBack1, HIGH); digitalWrite(lBack2, LOW);
 }
 
-void solaDon() {
+void solaDon(int hiz) {
   // Motor hızlarını ayarla
-  analogWrite(renablePin1, 255); analogWrite(renablePin2, 255);
-  analogWrite(lenablePin1, 255); analogWrite(lenablePin2, 255);
+  analogWrite(renablePin1, hiz); analogWrite(renablePin2, hiz);
+  analogWrite(lenablePin1, hiz); analogWrite(lenablePin2, hiz);
 
   // Sağ taraf motorlar TAM İLERİ 
   digitalWrite(rFront1, HIGH); digitalWrite(rFront2, LOW);
