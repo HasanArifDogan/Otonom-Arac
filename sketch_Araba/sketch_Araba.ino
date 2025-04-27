@@ -56,6 +56,13 @@ float heading;
 //Otonom Sürüş Değişkenleri
 bool dogruYoneDondu = false;
 
+//sonar sensor
+const int trigPin = 6;
+const int echoPin = 7;
+const float SES_HIZI = 0.03432; //cm/μS cinsinden sesin hızı 0.03432 cm/μS
+unsigned long sure;
+float uzaklik;
+
 String line = "";
 unsigned long lastTime;
 
@@ -82,6 +89,10 @@ void setup() {
   pinMode(lBack2, OUTPUT);
   pinMode(lenablePin2, OUTPUT);
 
+  //Sonar sensör pinler
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  
   // Pusula başlatma
   Wire.begin();
   lis2mdlBaslat();
@@ -100,6 +111,9 @@ void loop() {
   
   // Hareket kontrolü
   hareketKontrol();
+
+  //Çarpma Önleme
+  carpmaOnle();
 }
 
 // Bluetooth Kontrol Fonksiyonu
@@ -116,16 +130,16 @@ void bluetoothKontrol() {
 
           // Switch durumlarını kontrol et
           if (varName == "switch1") {
-            if(varValue == "true") belirliYoneGit(0,3);    // Kuzey (0°)
+            if(varValue == "true") belirliYoneGit(0,3);   // Kuzey (0°), 3sn   
           }
           else if (varName == "switch2") {
-            if(varValue == "true") belirliYoneGit(1,3);   // Batı (90°)
+            if(varValue == "true") belirliYoneGit(1,3);   // Batı (90°), 3sn
           }
           else if (varName == "switch3") {
-            if(varValue == "true") belirliYoneGit(2,3);  // Güney (180°)
+            if(varValue == "true") belirliYoneGit(2,3);   // Güney (180°), 3sn
           }
           else if (varName == "switch4") {
-            if(varValue == "true") belirliYoneGit(3,3);  // Doğu (270°)
+            if(varValue == "true") belirliYoneGit(3,3);   // Doğu (270°), 3sn
           }
 
           // Joystick verilerini de işlemeye devam et
@@ -380,6 +394,49 @@ void belirliYoneGit(int yonNum, int sure){
 
   dur();
 }
+/**************************************
+ * SONAR SENSOR FONKSİYONLARI
+ **************************************/
+
+void dalgaYolla(){
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+}
+
+float mesafeHesapla(){
+  dalgaYolla();
+
+  sure = pulseIn(echoPin, HIGH, 30000UL);
+
+  // Eğer sure 0 ise, echo alınamadı 
+  if (sure == 0) {
+    Serial.println("Echo alınamadı! (Objenin uzaklığı çok büyük veya yok?)");
+    delay(50);
+    return 0.0; // Ölçümü iptal edip sonraki döngüye geç
+  }
+
+  uzaklik = (sure * SES_HIZI) / 2.0;
+
+  return uzaklik;
+}
+
+void carpmaOnle(){
+  mesafeHesapla();
+  if(uzaklik < 5){
+    dur();
+  }
+}
+
+void uzaklikYaz(){
+  Serial.print("Uzaklık: ");
+  Serial.print(uzaklik);
+  Serial.println(" cm");
+}
+
 
 /**************************************
  * MOTOR FONKSİYONLARI
